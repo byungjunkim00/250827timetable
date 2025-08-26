@@ -5,7 +5,7 @@ import re
 # --- 0. 설정 ---
 # 🚨 중요: 이 URL을 본인의 GitHub 'timetable.csv' 파일의 'Raw' URL로 변경하세요.
 # 예: https://raw.githubusercontent.com/사용자이름/저장소이름/main/timetable.csv
-GITHUB_FILE_URL = "https://raw.githubusercontent.com/byungjunkim00/250827timetable/timetable.csv" 
+GITHUB_FILE_URL = "https://raw.githubusercontent.com/byungjunkim00/250827timetable/refs/heads/main/timetable.csv" 
 
 # --- 1. 데이터 로드 및 전처리 함수 ---
 @st.cache_data(ttl=3600) # 1시간 동안 데이터 캐싱
