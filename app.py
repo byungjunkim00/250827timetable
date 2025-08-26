@@ -2,148 +2,173 @@ import streamlit as st
 import pandas as pd
 import re
 
+# --- 0. 설정 ---
+# 🚨 중요: 이 URL을 본인의 GitHub 'timetable.csv' 파일의 'Raw' URL로 변경하세요.
+# 예: https://raw.githubusercontent.com/사용자이름/저장소이름/main/timetable.csv
+GITHUB_FILE_URL = "https://raw.githubusercontent.com/streamlit/demo-data/master/timetable_example.csv" # <-- ❗️ 본인 URL로 수정 필요
+
 # --- 1. 데이터 로드 및 전처리 함수 ---
-def process_timetable_data(uploaded_file):
+@st.cache_data(ttl=3600) # 1시간 동안 데이터 캐싱
+def load_data_from_github(url):
     """
-    업로드된 CSV 파일을 읽고 Streamlit 앱에 맞게 데이터를 전처리합니다.
-    - 불필요한 행과 열을 제거합니다.
-    - Multi-index 헤더를 단일 헤더로 정리합니다.
+    GitHub에 있는 CSV 파일을 읽고 앱에 맞게 데이터를 전처리합니다.
+    - 불필요한 행과 열을 제거하고, 헤더를 정리합니다.
     - 교사 이름에서 괄호와 숫자를 제거합니다.
-    - 빈 데이터를 정리합니다.
     """
     try:
-        # 두 번째 행부터 헤더로 인식하고, 첫 번째 데이터 행은 4번째 줄부터 시작
-        df = pd.read_csv(uploaded_file, header=[1, 2], skipinitialspace=True)
+        # header=[1, 2]를 통해 2, 3번째 줄을 Multi-index 헤더로 지정
+        df = pd.read_csv(url, header=[1, 2], skipinitialspace=True)
 
-        # A. 컬럼 이름 재구성
-        new_columns = []
-        # 기본 정보 컬럼 (연번, 교과, 부서, 교사, 담임)
-        for i in range(5):
-            new_columns.append(df.columns[i][1])
-
-        # 시간표 컬럼 (월1, 월2, ..., 금7)
-        current_day = ''
+        # A. 컬럼 이름 재구성 (요일 + 교시)
+        new_columns = [col[1] for col in df.columns[:5]] # 기본 정보 컬럼
+        day_temp = ''
         for col in df.columns[5:]:
-            day = col[0] if 'Unnamed' not in col[0] else current_day
+            day = col[0] if 'Unnamed' not in col[0] else day_temp
             period = col[1]
             new_columns.append(f"{day}{period}")
-            current_day = day
-        
+            day_temp = day
         df.columns = new_columns
         
         # B. 데이터 정제
-        # '연번' 컬럼이 비어있는 불필요한 행 제거
-        df.dropna(subset=['연번'], inplace=True)
-        # '연번'을 정수형으로 변환
+        df.dropna(subset=['연번'], inplace=True) # 연번 없는 행 제거
         df['연번'] = df['연번'].astype(int)
-        
-        # 교사 이름에서 괄호와 시수 정보 제거 (예: "천민정(16)" -> "천민정")
         df['교사'] = df['교사'].apply(lambda x: re.match(r'^[가-힣]+', str(x)).group(0) if re.match(r'^[가-힣]+', str(x)) else x)
-        
-        # 결측값(NaN)을 빈 문자열로 대체
         df.fillna('', inplace=True)
-        
         return df
 
     except Exception as e:
-        st.error(f"파일을 처리하는 중 오류가 발생했습니다: {e}")
-        st.warning("올바른 형식의 CSV 파일을 업로드했는지 확인해주세요.")
+        st.error(f"GitHub에서 데이터를 불러오는 데 실패했습니다: {e}")
+        st.error("입력한 URL이 'Raw' 형태인지 확인해주세요.")
         return None
 
 # --- 2. UI 및 시간표 표시 함수 ---
+
+def display_combined_timetable(df_filtered):
+    """
+    [기능 2] 선택된 모든 교사의 공통 공강 시간을 보여주는 종합 시간표를 생성합니다.
+    """
+    st.subheader("👨‍🏫 종합 시간표 (공통 공강 찾기)")
+    st.info("선택된 모든 선생님들의 공통 공강 시간을 ✅ 로 표시합니다.")
+
+    days = ['월', '화', '수', '목', '금']
+    periods = [str(i) for i in range(1, 8)]
+    combined_df = pd.DataFrame(index=[f"{p}교시" for p in periods], columns=days)
+
+    for day in days:
+        for period in periods:
+            col_name = f"{day}{period}"
+            if col_name in df_filtered.columns:
+                # 해당 시간의 모든 선생님 수업이 비어있는지('') 확인
+                is_all_free = (df_filtered[col_name] == '').all()
+                combined_df.loc[f"{period}교시", day] = "공강 ✅" if is_all_free else "수업 중 ❌"
+
+    combined_df.dropna(how='all', inplace=True)
+    st.table(combined_df)
+
+def display_availability_filter(df_filtered):
+    """
+    [기능 3] 특정 요일, 특정 교시에 수업이 있는/없는 교사를 필터링하여 보여줍니다.
+    """
+    with st.expander(" 특정 시간 가능/불가능 교사 찾기"):
+        col1, col2 = st.columns(2)
+        with col1:
+            selected_day = st.selectbox("요일 선택", ['월', '화', '수', '목', '금'], key="day_filter")
+        with col2:
+            selected_period = st.selectbox("교시 선택", [f"{i}교시" for i in range(1, 8)], key="period_filter")
+        
+        target_period = selected_period.replace("교시", "")
+        target_column = f"{selected_day}{target_period}"
+
+        if target_column in df_filtered.columns:
+            # 수업이 없는 교사: 해당 컬럼 값이 빈 문자열인 경우
+            available_teachers = df_filtered[df_filtered[target_column] == '']['교사'].tolist()
+            # 수업이 있는 교사: 해당 컬럼 값이 비어있지 않은 경우
+            unavailable_teachers = df_filtered[df_filtered[target_column] != '']['교사'].tolist()
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write(f"**✅ {selected_day}요일 {selected_period}에 수업이 없는 선생님**")
+                if available_teachers:
+                    st.write(" | ".join(available_teachers))
+                else:
+                    st.write("-")
+            
+            with col2:
+                st.write(f"**❌ {selected_day}요일 {selected_period}에 수업이 있는 선생님**")
+                if unavailable_teachers:
+                    st.write(" | ".join(unavailable_teachers))
+                else:
+                    st.write("-")
+
 def display_teacher_timetable(df_filtered):
     """
-    필터링된 데이터프레임을 받아 각 교사의 시간표를 보기 좋게 출력합니다.
+    필터링된 각 교사의 개별 시간표를 출력합니다.
     """
-    if df_filtered.empty:
-        st.info("선택한 조건에 해당하는 교사가 없습니다.")
-        return
-
+    st.subheader("📘 개별 시간표 상세 보기")
     for _, row in df_filtered.iterrows():
-        teacher_name = row['교사']
-        subject = row['교과']
-        department = row['부서']
+        teacher_name, subject, department = row['교사'], row['교과'], row['부서']
+        st.markdown(f"**{teacher_name} 선생님** ({department} | {subject})")
         
-        st.subheader(f"📘 {teacher_name} 선생님 시간표")
-        st.caption(f"소속: {department} | 교과: {subject}")
-
-        # 시간표 데이터를 wide format에서 long format으로 변경하여 표 생성
         days = ['월', '화', '수', '목', '금']
         periods = [str(i) for i in range(1, 8)]
-        
-        timetable_display = pd.DataFrame(index=[f"{p}교시" for p in periods], columns=days)
+        timetable = pd.DataFrame(index=[f"{p}교시" for p in periods], columns=days)
         
         for day in days:
             for period in periods:
                 col_name = f"{day}{period}"
                 if col_name in row and row[col_name]:
-                    timetable_display.loc[f"{period}교시", day] = row[col_name]
+                    timetable.loc[f"{period}교시", day] = row[col_name]
 
-        # 데이터가 없는 행(모든 요일이 빈 7교시 등) 제거 및 NaN 값 처리
-        timetable_display.dropna(how='all', inplace=True)
-        timetable_display.fillna('', inplace=True)
-
-        st.table(timetable_display)
-        st.markdown("---")
-
+        timetable.dropna(how='all', inplace=True)
+        timetable.fillna('', inplace=True)
+        st.table(timetable)
 
 # --- 3. Streamlit 앱 메인 구성 ---
 
-# 페이지 기본 설정
 st.set_page_config(page_title="교사 시간표 조회 시스템", layout="wide")
-
-# 제목
 st.title("🗓️ 2025학년도 2학기 교사 시간표 조회")
 
-# 파일 업로더
-uploaded_file = st.file_uploader("📁 '2025 2학기 교사 전체 시간표(확정).csv' 파일을 업로드하세요.", type="csv")
+# 데이터 로드
+df = load_data_from_github(GITHUB_FILE_URL)
 
+if df is not None:
+    st.sidebar.header("🔍 시간표 검색")
+    search_option = st.sidebar.radio("검색 방법", ('교과 및 부서로 검색', '이름으로 검색'))
 
-if uploaded_file is not None:
-    # 데이터 로드 및 처리
-    df = process_timetable_data(uploaded_file)
+    filtered_df = pd.DataFrame()
 
-    if df is not None:
-        st.sidebar.header("🔍 시간표 검색")
-
-        # 검색 방식 선택 (라디오 버튼)
-        search_option = st.sidebar.radio(
-            "검색 방법을 선택하세요.",
-            ('이름으로 검색', '교과 및 부서로 검색')
-        )
-
-        filtered_df = pd.DataFrame()
-
-        # 이름으로 검색
-        if search_option == '이름으로 검색':
-            teacher_list = sorted(df['교사'].unique())
-            selected_teacher = st.sidebar.selectbox("선생님 이름을 선택하세요.", teacher_list)
-            if selected_teacher:
-                filtered_df = df[df['교사'] == selected_teacher]
+    if search_option == '이름으로 검색':
+        teacher_list = sorted(df['교사'].unique())
+        selected_teachers = st.sidebar.multiselect("선생님 이름을 선택하세요 (복수 선택 가능)", teacher_list)
+        if selected_teachers:
+            filtered_df = df[df['교사'].isin(selected_teachers)]
+    else: # 교과 및 부서로 검색
+        subject_list = sorted(df['교과'].dropna().unique())
+        department_list = sorted(df['부서'].dropna().unique())
         
-        # 교과 및 부서로 검색
-        else:
-            subject_list = sorted(df['교과'].dropna().unique())
-            department_list = sorted(df['부서'].dropna().unique())
+        selected_subjects = st.sidebar.multiselect("교과 선택", subject_list)
+        selected_departments = st.sidebar.multiselect("부서 선택", department_list)
+        
+        if selected_subjects or selected_departments:
+            query_parts = []
+            if selected_subjects: query_parts.append("교과 in @selected_subjects")
+            if selected_departments: query_parts.append("부서 in @selected_departments")
+            filtered_df = df.query(" and ".join(query_parts))
 
-            selected_subjects = st.sidebar.multiselect("교과를 선택하세요. (복수 선택 가능)", subject_list)
-            selected_departments = st.sidebar.multiselect("부서를 선택하세요. (복수 선택 가능)", department_list)
+    # 검색 결과 표시
+    if not filtered_df.empty:
+        # 1. 종합 시간표 (2명 이상 선택 시)
+        if len(filtered_df) > 1:
+            display_combined_timetable(filtered_df)
+            st.markdown("---")
 
-            # 필터링 로직
-            if not selected_subjects and not selected_departments:
-                st.info("조회할 교과 또는 부서를 사이드바에서 선택해주세요.")
-                filtered_df = pd.DataFrame() # 빈 데이터프레임
-            else:
-                query_parts = []
-                if selected_subjects:
-                    query_parts.append("교과 in @selected_subjects")
-                if selected_departments:
-                    query_parts.append("부서 in @selected_departments")
-                
-                query_string = " and ".join(query_parts)
-                filtered_df = df.query(query_string)
-
-        # 결과 출력
+        # 2. 특정 시간 가능/불가능 교사 찾기
+        display_availability_filter(filtered_df)
+        st.markdown("---")
+        
+        # 3. 개별 시간표
         display_teacher_timetable(filtered_df)
+    else:
+        st.info("조회할 조건을 사이드바에서 선택해주세요.")
 else:
-    st.info("시간표 CSV 파일을 업로드하여 조회를 시작하세요.")
+    st.warning("데이터를 불러올 수 없습니다. 코드의 GitHub URL을 확인해주세요.")
