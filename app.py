@@ -32,7 +32,7 @@ def load_data_from_github(url):
         return None
 
 def style_timetable(df):
-    """[개선] 수업이 있는 셀을 연한 회색으로 강조하는 스타일링 함수"""
+    """수업이 있는 셀을 연한 회색으로 강조하는 스타일링 함수"""
     def color_cells(val):
         return 'background-color: #f5f5f5' if val else ''
     return df.style.applymap(color_cells)
@@ -40,15 +40,14 @@ def style_timetable(df):
 # --- 2. 기능별 UI 함수 ---
 
 def display_lunch_members(df):
-    """[최종 개선] 요일 및 부서 선택 방식으로 점심 멤버를 조회합니다."""
+    """[개선] 요일 선택(기본값: 오늘) 및 부서 선택 방식으로 점심 멤버를 조회합니다."""
     with st.expander("🥗 점심 멤버 찾기 (요일/부서 선택)", expanded=True):
+        # [개선] 오늘의 요일을 기본값으로 설정 (주말일 경우 월요일)
         today_weekday = datetime.datetime.today().weekday()
-        # 오늘이 주말이면 월요일(0)을 기본값으로 설정
         default_day_index = today_weekday if today_weekday < 5 else 0
         
         col1, col2 = st.columns(2)
         with col1:
-            # [개선] 요일 선택 기능 추가
             selected_day = st.selectbox("요일 선택", ['월', '화', '수', '목', '금'], index=default_day_index)
         
         df_with_dept = df[df['부서'] != '']
@@ -66,14 +65,14 @@ def display_lunch_members(df):
 
             c1, c2 = st.columns(2)
             with c1:
-                st.metric(f"✅ {selected_dept} 점심 가능", f"{len(available)}명")
+                st.metric(f"✅ 4교시 식사 가능", f"{len(available)}명")
                 if available: st.caption(" | ".join(available))
             with c2:
-                st.metric(f"❌ {selected_dept} 수업 중", f"{len(busy)}명")
+                st.metric(f"❌ 4교시 수업 중", f"{len(busy)}명")
                 if busy: st.caption(" | ".join(busy))
 
 def display_combined_timetable(df_filtered):
-    """[개선] 공통 공강 시간 강조 및 수업 시간 음영 처리를 적용합니다."""
+    """공통 공강 시간 강조 및 수업 시간 음영 처리를 적용합니다."""
     st.subheader("👨‍🏫 종합 시간표 (공통 공강 찾기)")
     st.info("공통 공강은 ✅, 수업이 있는 시간은 옅은 회색(⬜)으로 표시됩니다.")
     
@@ -93,7 +92,6 @@ def display_combined_timetable(df_filtered):
 def display_availability_filter(df_filtered):
     """특정 시간에 수업이 있는/없는 교사를 필터링합니다."""
     with st.expander("🕒 특정 시간 가능/불가능 교사 찾기"):
-        # ... (이전과 동일)
         col1, col2 = st.columns(2)
         day = col1.selectbox("요일 선택", ['월', '화', '수', '목', '금'], key="day_filter")
         period = col2.selectbox("교시 선택", [f"{i}교시" for i in range(1, 8)], key="period_filter")
@@ -108,7 +106,7 @@ def display_availability_filter(df_filtered):
             if unavailable: c2.caption(" | ".join(unavailable))
 
 def display_teacher_timetable(df_filtered):
-    """[개선] 수업 시간을 음영 처리하여 개별 시간표를 출력합니다."""
+    """수업 시간을 음영 처리하여 개별 시간표를 출력합니다."""
     st.subheader("📘 개별 시간표 상세 보기")
     st.info("수업이 있는 시간은 옅은 회색(⬜)으로 표시됩니다.")
     for _, row in df_filtered.iterrows():
@@ -144,7 +142,6 @@ if df is not None:
         subjects = st.sidebar.multiselect("교과 선택", sorted(df['교과'].dropna().unique()))
         departments = st.sidebar.multiselect("부서 선택", sorted(df['부서'].dropna().unique()))
         
-        # [개선] 1차 필터링 후 세부 교사 선택 기능
         if subjects or departments:
             q_parts = []
             if subjects: q_parts.append("교과 in @subjects")
