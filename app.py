@@ -32,43 +32,44 @@ def load_data_from_github(url):
         return None
 
 def style_timetable(df):
-    """[최종 개선] 수업이 있는 셀을 연한 회색으로 강조하는 스타일링 함수"""
+    """[개선] 수업이 있는 셀을 연한 회색으로 강조하는 스타일링 함수"""
     def color_cells(val):
-        # 셀에 내용이 있으면 (수업이 있으면) 회색으로, 없으면 기본색 유지
         return 'background-color: #f5f5f5' if val else ''
     return df.style.applymap(color_cells)
 
 # --- 2. 기능별 UI 함수 ---
 
 def display_lunch_members(df):
-    """[개선] 부서 선택 방식으로 오늘의 점심 멤버를 조회합니다."""
-    with st.expander("🥗 오늘의 점심 멤버 찾기 (부서 선택)", expanded=True):
+    """[최종 개선] 요일 및 부서 선택 방식으로 점심 멤버를 조회합니다."""
+    with st.expander("🥗 점심 멤버 찾기 (요일/부서 선택)", expanded=True):
         today_weekday = datetime.datetime.today().weekday()
-        weekday_map = {0: '월', 1: '화', 2: '수', 3: '목', 4: '금'}
-
-        if today_weekday not in weekday_map:
-            st.success("오늘은 주말입니다. 즐거운 주말 보내세요! 🎉")
-            return
-
-        today_kor = weekday_map[today_weekday]
-        st.info(f"오늘은 **{today_kor}요일**입니다. 4교시 수업 여부를 조회할 부서를 선택하세요.")
+        # 오늘이 주말이면 월요일(0)을 기본값으로 설정
+        default_day_index = today_weekday if today_weekday < 5 else 0
         
-        all_departments = sorted(df[df['부서'] != '']['부서'].unique())
-        selected_dept = st.selectbox("부서 선택", all_departments, index=None, placeholder="부서를 선택하세요...")
+        col1, col2 = st.columns(2)
+        with col1:
+            # [개선] 요일 선택 기능 추가
+            selected_day = st.selectbox("요일 선택", ['월', '화', '수', '목', '금'], index=default_day_index)
+        
+        df_with_dept = df[df['부서'] != '']
+        all_departments = sorted(df_with_dept['부서'].unique())
+        
+        with col2:
+            selected_dept = st.selectbox("부서 선택", all_departments, index=None, placeholder="부서를 선택하여 조회하세요...")
 
         if selected_dept:
-            target_column = f"{today_kor}4"
+            target_column = f"{selected_day}4"
             dept_df = df[df['부서'] == selected_dept]
             
             available = dept_df[dept_df[target_column] == '']['교사'].tolist()
             busy = dept_df[dept_df[target_column] != '']['교사'].tolist()
 
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric(f"✅ 4교시 식사 가능", f"{len(available)}명")
+            c1, c2 = st.columns(2)
+            with c1:
+                st.metric(f"✅ {selected_dept} 점심 가능", f"{len(available)}명")
                 if available: st.caption(" | ".join(available))
-            with col2:
-                st.metric(f"❌ 4교시 수업 중", f"{len(busy)}명")
+            with c2:
+                st.metric(f"❌ {selected_dept} 수업 중", f"{len(busy)}명")
                 if busy: st.caption(" | ".join(busy))
 
 def display_combined_timetable(df_filtered):
@@ -84,16 +85,15 @@ def display_combined_timetable(df_filtered):
             col_name = f"{day}{i+1}"
             if col_name in df_filtered.columns:
                 is_all_free = (df_filtered[col_name] == '').all()
-                combined_df.loc[period_name, day] = "✅ 공통 공강" if is_all_free else "수업" # 배경색을 위해 '수업' 텍스트 임시 삽입
+                combined_df.loc[period_name, day] = "✅ 공통 공강" if is_all_free else "수업"
     
-    # '수업' 텍스트를 공백으로 바꾸면서 스타일 적용
     styled_df = combined_df.replace("수업", "").style.applymap(lambda val: 'background-color: #f5f5f5' if not str(val).startswith('✅') and val else '')
     st.dataframe(styled_df)
-
 
 def display_availability_filter(df_filtered):
     """특정 시간에 수업이 있는/없는 교사를 필터링합니다."""
     with st.expander("🕒 특정 시간 가능/불가능 교사 찾기"):
+        # ... (이전과 동일)
         col1, col2 = st.columns(2)
         day = col1.selectbox("요일 선택", ['월', '화', '수', '목', '금'], key="day_filter")
         period = col2.selectbox("교시 선택", [f"{i}교시" for i in range(1, 8)], key="period_filter")
@@ -119,7 +119,6 @@ def display_teacher_timetable(df_filtered):
             for i, period in enumerate(periods):
                 col_name = f"{day}{i+1}"
                 if col_name in row: timetable.loc[period, day] = row[col_name]
-        
         st.dataframe(style_timetable(timetable.fillna('')))
 
 # --- 3. Streamlit 앱 메인 구성 ---
@@ -144,11 +143,26 @@ if df is not None:
     else:
         subjects = st.sidebar.multiselect("교과 선택", sorted(df['교과'].dropna().unique()))
         departments = st.sidebar.multiselect("부서 선택", sorted(df['부서'].dropna().unique()))
+        
+        # [개선] 1차 필터링 후 세부 교사 선택 기능
         if subjects or departments:
             q_parts = []
             if subjects: q_parts.append("교과 in @subjects")
             if departments: q_parts.append("부서 in @departments")
-            filtered_df = df.query(" and ".join(q_parts))
+            pre_filtered_df = df.query(" and ".join(q_parts))
+            
+            if not pre_filtered_df.empty:
+                st.sidebar.markdown("---")
+                st.sidebar.write("명단에서 포함할 교사를 선택하세요:")
+                
+                teachers_from_filter = pre_filtered_df['교사'].unique().tolist()
+                final_selected_teachers = []
+                for teacher in teachers_from_filter:
+                    if st.sidebar.checkbox(teacher, value=True, key=f"cb_{teacher}"):
+                        final_selected_teachers.append(teacher)
+                
+                if final_selected_teachers:
+                    filtered_df = pre_filtered_df[pre_filtered_df['교사'].isin(final_selected_teachers)]
     
     if not filtered_df.empty:
         st.header("🔎 검색 결과")
