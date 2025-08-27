@@ -4,7 +4,7 @@ import re
 import datetime
 
 # --- 0. 설정 ---
-# 사용자가 제공한 GitHub 'timetable.csv' 파일의 'Raw' URL
+# GitHub 'timetable.csv' 파일의 Raw URL
 GITHUB_FILE_URL = "https://raw.githubusercontent.com/byungjunkim00/250827timetable/main/timetable.csv"
 
 # --- 1. 데이터 로드 및 전처리 함수 ---
@@ -15,6 +15,7 @@ def load_data_from_github(url):
     """
     try:
         df = pd.read_csv(url, header=[1, 2], skipinitialspace=True)
+        # 컬럼 이름 재구성
         new_columns = [col[1] for col in df.columns[:5]]
         day_temp = ''
         for col in df.columns[5:]:
@@ -24,6 +25,7 @@ def load_data_from_github(url):
             day_temp = day
         df.columns = new_columns
         
+        # 데이터 정제
         df.dropna(subset=['연번'], inplace=True)
         df['연번'] = df['연번'].astype(int)
         df['교사'] = df['교사'].apply(lambda x: re.match(r'^[가-힣]+', str(x)).group(0) if re.match(r'^[가-힣]+', str(x)) else x)
@@ -32,18 +34,18 @@ def load_data_from_github(url):
 
     except Exception as e:
         st.error(f"GitHub에서 데이터를 불러오는 데 실패했습니다: {e}")
-        st.error("입력한 URL이 'Raw' 형태인지, 저장소가 Public으로 되어있는지 확인해주세요.")
+        st.error("URL이 정확한지, GitHub 저장소가 'Public' 상태인지 확인해주세요.")
         return None
 
 # --- 2. 기능별 UI 함수 ---
 
 def display_lunch_members(df):
     """
-    [기능 4] 오늘의 점심 멤버 (4교시 공강)를 부서별로 조회합니다.
+    [기능 4, 개선됨] 오늘의 4교시 공강/수업 여부에 따라 점심 멤버를 조회합니다.
     """
     st.header("🥗 오늘의 점심 멤버 찾기")
 
-    today_weekday = datetime.datetime.today().weekday() # 월요일=0, 일요일=6
+    today_weekday = datetime.datetime.today().weekday()
     weekday_map = {0: '월', 1: '화', 2: '수', 3: '목', 4: '금'}
 
     if today_weekday not in weekday_map:
@@ -51,40 +53,44 @@ def display_lunch_members(df):
         return
 
     today_kor = weekday_map[today_weekday]
-    st.info(f"오늘은 **{today_kor}요일**입니다. 4교시에 점심 식사가 가능한 부서별 선생님 명단입니다.")
-
+    st.info(f"오늘은 **{today_kor}요일**입니다. 4교시 수업 여부에 따른 부서별 선생님 명단입니다.")
+    
     target_column = f"{today_kor}4"
     if target_column not in df.columns:
-        st.error(f"'{target_column}' 컬럼을 시간표 데이터에서 찾을 수 없습니다.")
+        st.error(f"'{target_column}' 컬럼을 데이터에서 찾을 수 없습니다.")
         return
 
+    # 4교시 공강인 교사 (점심 가능)
     free_teachers_df = df[df[target_column] == ''][['부서', '교사']].copy()
-    free_teachers_df = free_teachers_df[free_teachers_df['부서'] != ''].dropna()
+    free_groups = free_teachers_df[free_teachers_df['부서'] != ''].groupby('부서')['교사'].apply(list).to_dict()
 
-    lunch_groups = free_teachers_df.groupby('부서')['교사'].apply(list).to_dict()
+    # 4교시 수업인 교사 (점심 불가)
+    busy_teachers_df = df[df[target_column] != ''][['부서', '교사']].copy()
+    busy_groups = busy_teachers_df[busy_teachers_df['부서'] != ''].groupby('부서')['교사'].apply(list).to_dict()
 
-    if not lunch_groups:
-        st.warning("오늘은 4교시에 시간이 비는 선생님이 없습니다.")
-        return
-    
-    departments = sorted(lunch_groups.keys())
-    mid_point = (len(departments) // 2) + (len(departments) % 2)
-    
     col1, col2 = st.columns(2)
+
     with col1:
-        for dept in departments[:mid_point]:
+        st.subheader("✅ 4교시 점심 가능")
+        if not free_groups:
+            st.write("-")
+        for dept, teachers in sorted(free_groups.items()):
             with st.container(border=True):
-                st.subheader(f"{dept}")
-                st.text(" | ".join(lunch_groups[dept]))
+                st.markdown(f"**{dept}**")
+                st.text(" | ".join(teachers))
+
     with col2:
-        for dept in departments[mid_point:]:
-             with st.container(border=True):
-                st.subheader(f"{dept}")
-                st.text(" | ".join(lunch_groups[dept]))
+        st.subheader("❌ 4교시 수업 중")
+        if not busy_groups:
+            st.write("-")
+        for dept, teachers in sorted(busy_groups.items()):
+            with st.container(border=True):
+                st.markdown(f"**{dept}**")
+                st.text(" | ".join(teachers))
 
 def display_combined_timetable(df_filtered):
     """
-    [기능 2] 선택된 교사들의 공통 공강 시간을 보여주는 종합 시간표를 생성합니다.
+    [기능 2, 개선됨] 공통 공강 시간만 눈에 띄게 표시하는 종합 시간표를 생성합니다.
     """
     st.subheader("👨‍🏫 종합 시간표 (공통 공강 찾기)")
     st.info("선택된 모든 선생님들의 공통 공강 시간을 ✅ 로 표시합니다.")
@@ -98,10 +104,11 @@ def display_combined_timetable(df_filtered):
             col_name = f"{day}{period}"
             if col_name in df_filtered.columns:
                 is_all_free = (df_filtered[col_name] == '').all()
-                combined_df.loc[f"{period}교시", day] = "공강 ✅" if is_all_free else "수업 중"
+                # 모든 교사가 공강일 때만 표시, 나머지는 빈 칸
+                combined_df.loc[f"{period}교시", day] = "✅ 공통 공강" if is_all_free else ""
 
     combined_df.dropna(how='all', inplace=True)
-    st.table(combined_df.fillna("-"))
+    st.table(combined_df.fillna(""))
 
 def display_availability_filter(df_filtered):
     """
@@ -139,35 +146,33 @@ def display_teacher_timetable(df_filtered):
         st.table(timetable.dropna(how='all').fillna(''))
 
 # --- 3. Streamlit 앱 메인 구성 ---
-
 st.set_page_config(page_title="교사 시간표 조회 시스템", layout="wide")
 st.title("🗓️ 2025학년도 2학기 교사 시간표")
 
 df = load_data_from_github(GITHUB_FILE_URL)
 
 if df is not None:
-    # --- 오늘의 점심 멤버 기능 ---
     display_lunch_members(df)
     st.markdown("---")
 
-    # --- 사이드바 검색 기능 ---
     st.sidebar.header("🔍 시간표 검색")
     search_option = st.sidebar.radio("검색 방법", ('교과 및 부서로 검색', '이름으로 검색'))
     
     filtered_df = pd.DataFrame()
     if search_option == '이름으로 검색':
-        teachers = st.sidebar.multiselect("선생님 선택 (복수 가능)", sorted(df['교사'].unique()))
+        # [개선됨] sorted()를 제거하여 연번 순서대로 교사 목록 표시
+        teacher_list = df['교사'].unique().tolist()
+        teachers = st.sidebar.multiselect("선생님 선택 (연번 순)", teacher_list)
         if teachers: filtered_df = df[df['교사'].isin(teachers)]
     else:
         subjects = st.sidebar.multiselect("교과 선택", sorted(df['교과'].dropna().unique()))
         departments = st.sidebar.multiselect("부서 선택", sorted(df['부서'].dropna().unique()))
         if subjects or departments:
-            q = []
-            if subjects: q.append("교과 in @subjects")
-            if departments: q.append("부서 in @departments")
-            filtered_df = df.query(" and ".join(q))
+            q_parts = []
+            if subjects: q_parts.append("교과 in @subjects")
+            if departments: q_parts.append("부서 in @departments")
+            filtered_df = df.query(" and ".join(q_parts))
     
-    # --- 검색 결과 표시 ---
     if not filtered_df.empty:
         st.header("🔎 검색 결과")
         if len(filtered_df) > 1:
