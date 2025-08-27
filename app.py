@@ -92,11 +92,11 @@ def display_lunch_members(df):
                 dept_df = df_with_dept[df_with_dept['부서'] == dept]
                 
                 available = dept_df[dept_df[target_column] == '']['교사'].tolist()
-                st.markdown("**✅ 점심 가능**")
+                st.markdown("**✅ 4교시 점심 가능**")
                 st.text(" | ".join(available) if available else "-")
 
                 busy = dept_df[dept_df[target_column] != '']['교사'].tolist()
-                st.markdown("**❌ 수업 중**")
+                st.markdown("**❌ 4교시 수업 중**")
                 st.text(" | ".join(busy) if busy else "-")
 
     with col1:
