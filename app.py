@@ -65,10 +65,10 @@ def display_lunch_members(df):
 
             col1, col2 = st.columns(2)
             with col1:
-                st.metric(f"✅ {selected_dept} 4교시 식사 가능", f"{len(available)}명")
+                st.metric(f"✅ 4교시 식사 가능", f"{len(available)}명")
                 if available: st.caption(" | ".join(available))
             with col2:
-                st.metric(f"❌ {selected_dept} 4교시 수업 중", f"{len(busy)}명")
+                st.metric(f"❌ 4교시 수업 중", f"{len(busy)}명")
                 if busy: st.caption(" | ".join(busy))
 
 def display_combined_timetable(df_filtered):
