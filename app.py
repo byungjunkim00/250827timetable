@@ -57,11 +57,22 @@ def get_current_period():
             return current_day, period
     return current_day, None
 
+def highlight_schedule(df, current_day, current_period):
+    """[신규] 현재 요일(열)과 현재 교시(셀)를 다르게 강조하는 스타일링 함수"""
+    style_df = pd.DataFrame('', index=df.index, columns=df.columns)
+    # 1단계: 현재 요일 전체를 하늘색으로 강조
+    if current_day in style_df.columns:
+        style_df[current_day] = 'background-color: #f0f8ff' # AliceBlue
+    # 2단계: 현재 교시 셀을 노란색으로 덮어쓰기
+    if current_day in style_df.columns and current_period in style_df.index:
+        style_df.loc[current_period, current_day] = 'background-color: #FFFACD; font-weight: bold;' # LemonChiffon
+    return style_df
+
 # --- 2. 기능별 UI 함수 ---
 
 def display_lunch_members(df):
-    """[개선] 오늘의 점심 멤버 메뉴를 여닫을 수 있게 만들고, 부서별로 표시합니다."""
-    with st.expander("🥗 오늘의 점심 멤버 찾기 (부서별)", expanded=True):
+    """[최종 개선] 부서 선택 방식으로 오늘의 점심 멤버를 조회합니다."""
+    with st.expander("🥗 오늘의 점심 멤버 찾기 (부서 선택)", expanded=True):
         today_weekday = datetime.datetime.today().weekday()
         weekday_map = {0: '월', 1: '화', 2: '수', 3: '목', 4: '금'}
 
@@ -70,36 +81,30 @@ def display_lunch_members(df):
             return
 
         today_kor = weekday_map[today_weekday]
-        st.info(f"오늘은 **{today_kor}요일**입니다. 4교시 수업 여부에 따른 부서별 선생님 명단입니다.")
-        target_column = f"{today_kor}4"
-
-        df_with_dept = df[df['부서'] != ''].copy()
-        all_departments = sorted(df_with_dept['부서'].unique())
-
-        mid_point = (len(all_departments) + 1) // 2
-        col1, col2 = st.columns(2)
-
-        def display_dept_status(department_list):
-            for dept in department_list:
-                with st.container(border=True):
-                    st.subheader(f"{dept}")
-                    dept_df = df_with_dept[df_with_dept['부서'] == dept]
-                    
-                    available = dept_df[dept_df[target_column] == '']['교사'].tolist()
-                    st.markdown("**✅ 점심 가능**")
-                    st.text(" | ".join(available) if available else "-")
-
-                    busy = dept_df[dept_df[target_column] != '']['교사'].tolist()
-                    st.markdown("**❌ 수업 중**")
-                    st.text(" | ".join(busy) if busy else "-")
+        st.info(f"오늘은 **{today_kor}요일**입니다. 4교시 수업 여부를 조회할 부서를 선택하세요.")
         
-        with col1: display_dept_status(all_departments[:mid_point])
-        with col2: display_dept_status(all_departments[mid_point:])
+        all_departments = sorted(df[df['부서'] != '']['부서'].unique())
+        selected_dept = st.selectbox("부서 선택", all_departments, index=None, placeholder="부서를 선택하세요...")
+
+        if selected_dept:
+            target_column = f"{today_kor}4"
+            dept_df = df[df['부서'] == selected_dept]
+            
+            available = dept_df[dept_df[target_column] == '']['교사'].tolist()
+            busy = dept_df[dept_df[target_column] != '']['교사'].tolist()
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric(f"✅ {selected_dept} 점심 가능", f"{len(available)}명")
+                if available: st.caption(" | ".join(available))
+            with col2:
+                st.metric(f"❌ {selected_dept} 수업 중", f"{len(busy)}명")
+                if busy: st.caption(" | ".join(busy))
 
 def display_combined_timetable(df_filtered, current_day, current_period):
-    """[개선] 공통 공강 시간 강조 및 현재 시간 하이라이트 기능을 추가합니다."""
+    """[개선] 공통 공강 및 현재 시간 하이라이트 기능을 모두 적용합니다."""
     st.subheader("👨‍🏫 종합 시간표 (공통 공강 찾기)")
-    st.info("선택된 모든 선생님들의 공통 공강 시간을 ✅ 로, 현재 시간은 🟨 로 표시합니다.")
+    st.info("공통 공강은 ✅, 현재 요일은 🟦, 현재 시간은 🟨 로 표시됩니다.")
     
     days = ['월', '화', '수', '목', '금']
     periods = [f"{i}교시" for i in range(1, 8)]
@@ -110,14 +115,8 @@ def display_combined_timetable(df_filtered, current_day, current_period):
             if col_name in df_filtered.columns:
                 is_all_free = (df_filtered[col_name] == '').all()
                 combined_df.loc[period_name, day] = "✅ 공통 공강" if is_all_free else ""
-
-    def highlight_current(df):
-        style_df = pd.DataFrame('', index=df.index, columns=df.columns)
-        if current_day in style_df.columns and current_period in style_df.index:
-            style_df.loc[current_period, current_day] = 'background-color: #FFFACD; color: black; font-weight: bold;'
-        return style_df
     
-    st.dataframe(combined_df.fillna("").style.apply(highlight_current, axis=None))
+    st.dataframe(combined_df.fillna("").style.apply(highlight_schedule, current_day=current_day, current_period=current_period, axis=None))
 
 def display_availability_filter(df_filtered):
     """특정 시간에 수업이 있는/없는 교사를 필터링합니다."""
@@ -137,14 +136,9 @@ def display_availability_filter(df_filtered):
             if unavailable: c2.caption(" | ".join(unavailable))
 
 def display_teacher_timetable(df_filtered, current_day, current_period):
-    """[개선] 현재 시간을 기준으로 시간표를 강조하여 개별 시간표를 출력합니다."""
+    """[개선] 현재 요일/교시를 강조하여 개별 시간표를 출력합니다."""
     st.subheader("📘 개별 시간표 상세 보기")
-    def highlight_current(df):
-        style_df = pd.DataFrame('', index=df.index, columns=df.columns)
-        if current_day in style_df.columns and current_period in style_df.index:
-            style_df.loc[current_period, current_day] = 'background-color: #FFFACD; color: black; font-weight: bold;'
-        return style_df
-
+    st.info(f"현재 요일은 🟦, 현재 시간은 🟨 로 표시됩니다.")
     for _, row in df_filtered.iterrows():
         st.markdown(f"**{row['교사']} 선생님** ({row['부서']} | {row['교과']})")
         days, periods = ['월', '화', '수', '목', '금'], [f"{i}교시" for i in range(1, 8)]
@@ -153,7 +147,7 @@ def display_teacher_timetable(df_filtered, current_day, current_period):
             for i, period in enumerate(periods):
                 col_name = f"{day}{i+1}"
                 if col_name in row: timetable.loc[period, day] = row[col_name]
-        st.dataframe(timetable.fillna('').style.apply(highlight_current, axis=None))
+        st.dataframe(timetable.fillna('').style.apply(highlight_schedule, current_day=current_day, current_period=current_period, axis=None))
 
 # --- 3. Streamlit 앱 메인 구성 ---
 st.set_page_config(page_title="교사 시간표 조회 시스템", layout="wide")
