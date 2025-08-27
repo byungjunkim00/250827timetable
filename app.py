@@ -7,17 +7,6 @@ import datetime
 # GitHub 'timetable.csv' 파일의 Raw URL
 GITHUB_FILE_URL = "https://raw.githubusercontent.com/byungjunkim00/250827timetable/main/timetable.csv"
 
-# 각 교시별 시간 정보 (시작, 종료)
-PERIOD_TIMES = {
-    '1교시': (datetime.time(8, 30), datetime.time(9, 20)),
-    '2교시': (datetime.time(9, 30), datetime.time(10, 20)),
-    '3교시': (datetime.time(10, 30), datetime.time(11, 20)),
-    '4교시': (datetime.time(11, 30), datetime.time(12, 20)),
-    '5교시': (datetime.time(13, 20), datetime.time(14, 10)),
-    '6교시': (datetime.time(14, 20), datetime.time(15, 10)),
-    '7교시': (datetime.time(15, 20), datetime.time(16, 10)),
-}
-
 # --- 1. 데이터 로드 및 유틸리티 함수 ---
 @st.cache_data(ttl=3600)
 def load_data_from_github(url):
@@ -42,36 +31,17 @@ def load_data_from_github(url):
         st.error(f"GitHub에서 데이터를 불러오는 데 실패했습니다: {e}")
         return None
 
-def get_current_period():
-    """현재 시간을 기준으로 지금이 몇 요일 몇 교시인지 반환합니다."""
-    now = datetime.datetime.now()
-    current_time = now.time()
-    weekday = now.weekday()
-    
-    weekday_map = {0: '월', 1: '화', 2: '수', 3: '목', 4: '금'}
-    current_day = weekday_map.get(weekday)
-    
-    if not current_day: return None, None
-    for period, (start_time, end_time) in PERIOD_TIMES.items():
-        if start_time <= current_time <= end_time:
-            return current_day, period
-    return current_day, None
-
-def highlight_schedule(df, current_day, current_period):
-    """[신규] 현재 요일(열)과 현재 교시(셀)를 다르게 강조하는 스타일링 함수"""
-    style_df = pd.DataFrame('', index=df.index, columns=df.columns)
-    # 1단계: 현재 요일 전체를 하늘색으로 강조
-    if current_day in style_df.columns:
-        style_df[current_day] = 'background-color: #f0f8ff' # AliceBlue
-    # 2단계: 현재 교시 셀을 노란색으로 덮어쓰기
-    if current_day in style_df.columns and current_period in style_df.index:
-        style_df.loc[current_period, current_day] = 'background-color: #FFFACD; font-weight: bold;' # LemonChiffon
-    return style_df
+def style_timetable(df):
+    """[최종 개선] 수업이 있는 셀을 연한 회색으로 강조하는 스타일링 함수"""
+    def color_cells(val):
+        # 셀에 내용이 있으면 (수업이 있으면) 회색으로, 없으면 기본색 유지
+        return 'background-color: #f5f5f5' if val else ''
+    return df.style.applymap(color_cells)
 
 # --- 2. 기능별 UI 함수 ---
 
 def display_lunch_members(df):
-    """[최종 개선] 부서 선택 방식으로 오늘의 점심 멤버를 조회합니다."""
+    """[개선] 부서 선택 방식으로 오늘의 점심 멤버를 조회합니다."""
     with st.expander("🥗 오늘의 점심 멤버 찾기 (부서 선택)", expanded=True):
         today_weekday = datetime.datetime.today().weekday()
         weekday_map = {0: '월', 1: '화', 2: '수', 3: '목', 4: '금'}
@@ -101,10 +71,10 @@ def display_lunch_members(df):
                 st.metric(f"❌ {selected_dept} 4교시 수업 중", f"{len(busy)}명")
                 if busy: st.caption(" | ".join(busy))
 
-def display_combined_timetable(df_filtered, current_day, current_period):
-    """[개선] 공통 공강 및 현재 시간 하이라이트 기능을 모두 적용합니다."""
+def display_combined_timetable(df_filtered):
+    """[개선] 공통 공강 시간 강조 및 수업 시간 음영 처리를 적용합니다."""
     st.subheader("👨‍🏫 종합 시간표 (공통 공강 찾기)")
-    st.info("공통 공강은 ✅, 현재 요일은 🟦, 현재 시간은 🟨 로 표시됩니다.")
+    st.info("공통 공강은 ✅, 수업이 있는 시간은 옅은 회색(⬜)으로 표시됩니다.")
     
     days = ['월', '화', '수', '목', '금']
     periods = [f"{i}교시" for i in range(1, 8)]
@@ -114,14 +84,16 @@ def display_combined_timetable(df_filtered, current_day, current_period):
             col_name = f"{day}{i+1}"
             if col_name in df_filtered.columns:
                 is_all_free = (df_filtered[col_name] == '').all()
-                combined_df.loc[period_name, day] = "✅ 공통 공강" if is_all_free else ""
+                combined_df.loc[period_name, day] = "✅ 공통 공강" if is_all_free else "수업" # 배경색을 위해 '수업' 텍스트 임시 삽입
     
-    st.dataframe(combined_df.fillna("").style.apply(highlight_schedule, current_day=current_day, current_period=current_period, axis=None))
+    # '수업' 텍스트를 공백으로 바꾸면서 스타일 적용
+    styled_df = combined_df.replace("수업", "").style.applymap(lambda val: 'background-color: #f5f5f5' if not str(val).startswith('✅') and val else '')
+    st.dataframe(styled_df)
+
 
 def display_availability_filter(df_filtered):
     """특정 시간에 수업이 있는/없는 교사를 필터링합니다."""
     with st.expander("🕒 특정 시간 가능/불가능 교사 찾기"):
-        # ... (이전과 동일)
         col1, col2 = st.columns(2)
         day = col1.selectbox("요일 선택", ['월', '화', '수', '목', '금'], key="day_filter")
         period = col2.selectbox("교시 선택", [f"{i}교시" for i in range(1, 8)], key="period_filter")
@@ -135,10 +107,10 @@ def display_availability_filter(df_filtered):
             c2.metric(f"❌ {day} {period} **불가능**", f"{len(unavailable)}명")
             if unavailable: c2.caption(" | ".join(unavailable))
 
-def display_teacher_timetable(df_filtered, current_day, current_period):
-    """[개선] 현재 요일/교시를 강조하여 개별 시간표를 출력합니다."""
+def display_teacher_timetable(df_filtered):
+    """[개선] 수업 시간을 음영 처리하여 개별 시간표를 출력합니다."""
     st.subheader("📘 개별 시간표 상세 보기")
-    st.info(f"현재 요일은 🟦, 현재 시간은 🟨 로 표시됩니다.")
+    st.info("수업이 있는 시간은 옅은 회색(⬜)으로 표시됩니다.")
     for _, row in df_filtered.iterrows():
         st.markdown(f"**{row['교사']} 선생님** ({row['부서']} | {row['교과']})")
         days, periods = ['월', '화', '수', '목', '금'], [f"{i}교시" for i in range(1, 8)]
@@ -147,14 +119,14 @@ def display_teacher_timetable(df_filtered, current_day, current_period):
             for i, period in enumerate(periods):
                 col_name = f"{day}{i+1}"
                 if col_name in row: timetable.loc[period, day] = row[col_name]
-        st.dataframe(timetable.fillna('').style.apply(highlight_schedule, current_day=current_day, current_period=current_period, axis=None))
+        
+        st.dataframe(style_timetable(timetable.fillna('')))
 
 # --- 3. Streamlit 앱 메인 구성 ---
 st.set_page_config(page_title="교사 시간표 조회 시스템", layout="wide")
 st.title("🗓️ 2025학년도 2학기 교사 시간표")
 
 df = load_data_from_github(GITHUB_FILE_URL)
-current_day, current_period = get_current_period()
 
 if df is not None:
     display_lunch_members(df)
@@ -181,11 +153,11 @@ if df is not None:
     if not filtered_df.empty:
         st.header("🔎 검색 결과")
         if len(filtered_df) > 1:
-            display_combined_timetable(filtered_df, current_day, current_period)
+            display_combined_timetable(filtered_df)
             st.markdown("---")
         display_availability_filter(filtered_df)
         st.markdown("---")
-        display_teacher_timetable(filtered_df, current_day, current_period)
+        display_teacher_timetable(filtered_df)
     else:
         st.info("사이드바에서 조회할 조건을 선택해주세요.")
 else:
